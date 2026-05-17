@@ -87,19 +87,95 @@
         }
         .count { color: #4ecca3; font-weight: 700; }
         .enchant { color: #a29bfe; font-size: 11px; }
+        .warning { color: #e74c3c; font-size: 11px; font-weight: 700; }
         .no-results { color: #888; text-align: center; padding: 20px; }
         .stats { text-align: center; color: #888; font-size: 12px; margin-top: 10px; }
+        .opening {
+            background: #0f3460;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+        .opening-header {
+            font-weight: 700;
+            color: #4ecca3;
+            margin-bottom: 8px;
+        }
+        .mode-toggle {
+            display: flex;
+            gap: 8px;
+            background: #0f3460;
+            padding: 4px;
+            border-radius: 6px;
+            width: fit-content;
+        }
+        .mode-btn {
+            padding: 6px 16px;
+            border-radius: 4px;
+            border: none;
+            background: transparent;
+            color: #888;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .mode-btn.active {
+            background: #4ecca3;
+            color: #1a1a2e;
+        }
+        .search-bar {
+            width: 100%;
+            max-width: 400px;
+        }
+        .pagination {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 12px;
+            align-items: center;
+        }
+        .page-btn {
+            padding: 6px 12px;
+            border-radius: 4px;
+            border: none;
+            background: #0f3460;
+            color: #eee;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .page-btn:hover { background: #1a4a7a; }
+        .page-btn.active {
+            background: #4ecca3;
+            color: #1a1a2e;
+        }
+        .page-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .page-info {
+            color: #888;
+            font-size: 13px;
+            padding: 6px 12px;
+        }
     </style>
 </head>
 <body>
     <h1>Minecraft Loot Predictor</h1>
-    
+
     <div class="panel">
+        <div class="form-row">
+            <label>Mode:</label>
+            <div class="mode-toggle">
+                <button class="mode-btn active" id="modeStructure" onclick="setMode('structure')">Structure Loot</button>
+                <button class="mode-btn" id="modeVault" onclick="setMode('vault')">Ominous Vault</button>
+            </div>
+        </div>
         <div class="form-row">
             <label>Seed:</label>
             <input type="number" id="seedInput" value="-6168393533729723991" placeholder="Enter world seed">
         </div>
-        <div class="form-row">
+        <div class="form-row" id="structureRow">
             <label>Structure:</label>
             <select id="typeSelect">
                 <option value="igloo">Igloo</option>
@@ -114,67 +190,112 @@
                 <option value="fortress">Fortress</option>
                 <option value="end_city">End City</option>
                 <option value="stronghold">Stronghold</option>
+                <option value="ancient_city">Ancient City</option>
             </select>
         </div>
-        <div class="form-row">
+        <div class="form-row" id="radiusRow">
             <label>Radius:</label>
             <input type="number" id="radiusInput" value="5000" min="100" max="50000" step="100">
             <span style="color:#888">blocks</span>
         </div>
+        <div class="form-row" id="vaultRow" style="display:none">
+            <label>Openings:</label>
+            <input type="number" id="vaultOpenings" value="100" min="1" max="2000" step="1">
+            <span style="color:#888">max 2000</span>
+        </div>
+        <div class="form-row" id="vaultSearchRow" style="display:none">
+            <label>Search:</label>
+            <input type="text" id="vaultSearch" class="search-bar" placeholder="Filter items by name (e.g. 'diamond', 'enchanted')" oninput="filterVault()">
+        </div>
         <div class="form-row">
-            <button id="searchBtn" onclick="searchLoot()">Search Loot</button>
+            <button id="searchBtn" onclick="searchLoot()" disabled>Search Loot</button>
         </div>
     </div>
-    
+
     <div id="status"></div>
     <div id="results"></div>
-    
+
     <script src="cubiomes_loot.js"></script>
     <script>
         let cubiomes = null;
         let getLootPtr = null;
+        let getVaultPtr = null;
+        let currentMode = 'structure';
+
+        // Vault pagination state
+        let vaultAllOpenings = [];
+        let vaultFilteredOpenings = [];
+        let vaultPageSize = 50;
+        let vaultCurrentPage = 1;
 
         // Initialize WASM
         CubiomesLoot().then(module => {
             cubiomes = module;
             getLootPtr = cubiomes.cwrap('getStructureLoot', 'number', ['number', 'number', 'number']);
+            getVaultPtr = cubiomes.cwrap('getOminousVaultLoot', 'number', ['number', 'number']);
             document.getElementById('searchBtn').disabled = false;
         }).catch(err => {
             document.getElementById('status').innerHTML = '<div class="error">Failed to load WASM: ' + err + '</div>';
         });
 
+        function setMode(mode) {
+            currentMode = mode;
+            document.getElementById('modeStructure').classList.toggle('active', mode === 'structure');
+            document.getElementById('modeVault').classList.toggle('active', mode === 'vault');
+            document.getElementById('structureRow').style.display = mode === 'structure' ? '' : 'none';
+            document.getElementById('radiusRow').style.display = mode === 'structure' ? '' : 'none';
+            document.getElementById('vaultRow').style.display = mode === 'vault' ? '' : 'none';
+            document.getElementById('vaultSearchRow').style.display = mode === 'vault' ? '' : 'none';
+            document.getElementById('status').innerHTML = '';
+            document.getElementById('results').innerHTML = '';
+            vaultAllOpenings = [];
+            vaultFilteredOpenings = [];
+        }
+
         function searchLoot() {
             if (!cubiomes) return;
-            
+
             const seedStr = document.getElementById('seedInput').value;
-            const type = document.getElementById('typeSelect').value;
-            const radius = parseInt(document.getElementById('radiusInput').value);
-            
+
             document.getElementById('searchBtn').disabled = true;
             document.getElementById('status').innerHTML = '<div class="loading">Computing... (this may take a few seconds)</div>';
             document.getElementById('results').innerHTML = '';
-            
-            // Run in next tick to allow UI update
+
             setTimeout(() => {
                 try {
-                    // Allocate strings
-                    const seedLen = cubiomes.lengthBytesUTF8(seedStr) + 1;
+                    const seedLen = seedStr.length * 4 + 1;
                     const seedPtr = cubiomes._malloc(seedLen);
                     cubiomes.stringToUTF8(seedStr, seedPtr, seedLen);
-                    
-                    const typeLen = cubiomes.lengthBytesUTF8(type) + 1;
-                    const typePtr = cubiomes._malloc(typeLen);
-                    cubiomes.stringToUTF8(type, typePtr, typeLen);
-                    
-                    // Call WASM function
-                    const resultPtr = getLootPtr(seedPtr, typePtr, radius);
-                    const jsonStr = cubiomes.UTF8ToString(resultPtr);
-                    
+
+                    let jsonStr;
+                    if (currentMode === 'structure') {
+                        const type = document.getElementById('typeSelect').value;
+                        const radius = parseInt(document.getElementById('radiusInput').value);
+
+                        const typeLen = type.length * 4 + 1;
+                        const typePtr = cubiomes._malloc(typeLen);
+                        cubiomes.stringToUTF8(type, typePtr, typeLen);
+
+                        const resultPtr = getLootPtr(seedPtr, typePtr, radius);
+                        jsonStr = cubiomes.UTF8ToString(resultPtr);
+
+                        cubiomes._free(typePtr);
+
+                        const data = JSON.parse(jsonStr);
+                        renderResults(data.structures, data);
+                    } else {
+                        const numOpenings = parseInt(document.getElementById('vaultOpenings').value);
+                        const resultPtr = getVaultPtr(seedPtr, numOpenings);
+                        jsonStr = cubiomes.UTF8ToString(resultPtr);
+
+                        const data = JSON.parse(jsonStr);
+                        vaultAllOpenings = data.openings || [];
+                        vaultFilteredOpenings = vaultAllOpenings;
+                        vaultCurrentPage = 1;
+                        renderVaultPage();
+                    }
+
                     cubiomes._free(seedPtr);
-                    cubiomes._free(typePtr);
-                    
-                    const data = JSON.parse(jsonStr);
-                    renderResults(data);
                 } catch (e) {
                     document.getElementById('status').innerHTML = '<div class="error">Error: ' + e.message + '</div>';
                 } finally {
@@ -182,30 +303,134 @@
                 }
             }, 10);
         }
-        
-        function renderResults(structures) {
+
+        function filterVault() {
+            const query = document.getElementById('vaultSearch').value.toLowerCase().trim();
+            if (!query) {
+                vaultFilteredOpenings = vaultAllOpenings;
+            } else {
+                vaultFilteredOpenings = vaultAllOpenings.filter(op => {
+                    if (!op.loot) return false;
+                    return op.loot.some(item => item.item.toLowerCase().includes(query));
+                });
+            }
+            vaultCurrentPage = 1;
+            renderVaultPage();
+        }
+
+        function renderVaultPage() {
             const status = document.getElementById('status');
             const results = document.getElementById('results');
-            
-            if (!Array.isArray(structures) || structures.length === 0) {
-                status.innerHTML = '<div class="no-results">No structures found in range.</div>';
+
+            if (!vaultFilteredOpenings || vaultFilteredOpenings.length === 0) {
+                status.innerHTML = '<div class="no-results">No vault openings found.</div>';
+                results.innerHTML = '';
                 return;
             }
-            
-            status.innerHTML = `<div class="stats">Found ${structures.length} structure(s)</div>`;
-            
+
+            const total = vaultFilteredOpenings.length;
+            const totalPages = Math.max(1, Math.ceil(total / vaultPageSize));
+            if (vaultCurrentPage > totalPages) vaultCurrentPage = totalPages;
+            if (vaultCurrentPage < 1) vaultCurrentPage = 1;
+
+            const start = (vaultCurrentPage - 1) * vaultPageSize;
+            const end = Math.min(start + vaultPageSize, total);
+            const pageItems = vaultFilteredOpenings.slice(start, end);
+
+            status.innerHTML = `<div class="stats">Ominous Vault - ${total} opening(s) total | Showing ${start + 1}-${end}</div>`;
+
+            let html = '';
+            for (const op of pageItems) {
+                html += '<div class="opening">';
+                html += `<div class="opening-header">Opening #${op.opening}</div>`;
+                html += '<div style="margin-top:6px">';
+
+                if (op.loot && op.loot.length > 0) {
+                    for (const item of op.loot) {
+                        html += `<span class="loot-item">${item.item} <span class="count">x${item.count}</span>`;
+                        if (item.enchantments) {
+                            for (const ench of item.enchantments) {
+                                html += `<span class="enchant"> [${ench.name} ${ench.level}]</span>`;
+                            }
+                        }
+                        if (item.amplifier) {
+                            html += `<span class="enchant"> [amplifier: ${item.amplifier}]</span>`;
+                        }
+                        html += '</span>';
+                    }
+                } else {
+                    html += '<span style="color:#888">(empty)</span>';
+                }
+
+                html += '</div></div>';
+            }
+
+            // Pagination controls
+            html += '<div class="pagination">';
+            html += `<span class="page-info">Page ${vaultCurrentPage} / ${totalPages}</span>`;
+            html += `<button class="page-btn" onclick="goVaultPage(${vaultCurrentPage - 1})" ${vaultCurrentPage <= 1 ? 'disabled' : ''}>Prev</button>`;
+
+            const maxVisible = 7;
+            let pageStart = Math.max(1, vaultCurrentPage - Math.floor(maxVisible / 2));
+            let pageEnd = Math.min(totalPages, pageStart + maxVisible - 1);
+            if (pageEnd - pageStart < maxVisible - 1) {
+                pageStart = Math.max(1, pageEnd - maxVisible + 1);
+            }
+
+            if (pageStart > 1) {
+                html += `<button class="page-btn" onclick="goVaultPage(1)">1</button>`;
+                if (pageStart > 2) html += `<span style="color:#888;padding:6px;">...</span>`;
+            }
+
+            for (let p = pageStart; p <= pageEnd; p++) {
+                html += `<button class="page-btn ${p === vaultCurrentPage ? 'active' : ''}" onclick="goVaultPage(${p})">${p}</button>`;
+            }
+
+            if (pageEnd < totalPages) {
+                if (pageEnd < totalPages - 1) html += `<span style="color:#888;padding:6px;">...</span>`;
+                html += `<button class="page-btn" onclick="goVaultPage(${totalPages})">${totalPages}</button>`;
+            }
+
+            html += `<button class="page-btn" onclick="goVaultPage(${vaultCurrentPage + 1})" ${vaultCurrentPage >= totalPages ? 'disabled' : ''}>Next</button>`;
+            html += '</div>';
+
+            results.innerHTML = html;
+        }
+
+        function goVaultPage(page) {
+            vaultCurrentPage = page;
+            renderVaultPage();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function renderResults(structures, debugInfo) {
+            const status = document.getElementById('status');
+            const results = document.getElementById('results');
+
+            if (!Array.isArray(structures) || structures.length === 0) {
+                const debug = debugInfo ? ` (checked ${debugInfo.checked || 0} regions, found ${debugInfo.found || 0} structures)` : '';
+                status.innerHTML = '<div class="no-results">No structures found in range.' + debug + '</div>';
+                return;
+            }
+
+            const debug = debugInfo ? ` (checked ${debugInfo.checked || 0} regions, found ${debugInfo.found || 0} structures)` : '';
+            status.innerHTML = `<div class="stats">Found ${structures.length} structure(s)${debug}</div>`;
+
             let html = '';
             for (const st of structures) {
                 html += '<div class="structure">';
                 html += `<div class="structure-header">Structure at (${st.x}, ${st.z}) - chunk (${st.chunkX}, ${st.chunkZ}) - ${st.distance} blocks away</div>`;
-                
+
                 if (st.chests && st.chests.length > 0) {
                     for (const chest of st.chests) {
                         html += '<div class="chest">';
                         html += `<div class="chest-tp" onclick="navigator.clipboard.writeText('${chest.tp}')">${chest.tp} (click to copy)</div>`;
                         html += `<div style="font-size:11px;color:#888">Piece: ${chest.piece} | Seed: ${chest.seed}</div>`;
+                        if (chest.reliable === false) {
+                            html += `<div class="warning">[WARNING: the loot is wrong - FeaturePoolElement before chest]</div>`;
+                        }
                         html += '<div style="margin-top:6px">';
-                        
+
                         if (chest.loot && chest.loot.length > 0) {
                             for (const item of chest.loot) {
                                 html += `<span class="loot-item">${item.item} <span class="count">x${item.count}</span>`;
@@ -222,7 +447,7 @@
                         } else {
                             html += '<span style="color:#888">(empty)</span>';
                         }
-                        
+
                         html += '</div></div>';
                     }
                 } else {
