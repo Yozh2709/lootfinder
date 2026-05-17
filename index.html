@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft Loot Predictor</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 { color: #4ecca3; text-align: center; }
+        .panel {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .form-row {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        label { font-weight: 600; min-width: 80px; }
+        input, select {
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #0f3460;
+            background: #0f3460;
+            color: #eee;
+            font-size: 14px;
+        }
+        input[type="number"] { width: 200px; }
+        select { min-width: 160px; }
+        button {
+            padding: 10px 24px;
+            border-radius: 6px;
+            border: none;
+            background: #4ecca3;
+            color: #1a1a2e;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover { background: #3db892; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .loading { color: #4ecca3; font-style: italic; }
+        .error { color: #e74c3c; }
+        .structure {
+            background: #0f3460;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+        .structure-header {
+            font-weight: 700;
+            color: #4ecca3;
+            margin-bottom: 8px;
+        }
+        .chest {
+            background: #1a1a2e;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 8px;
+        }
+        .chest-tp {
+            font-family: monospace;
+            color: #f0a500;
+            cursor: pointer;
+        }
+        .chest-tp:hover { text-decoration: underline; }
+        .loot-item {
+            display: inline-block;
+            background: #16213e;
+            padding: 4px 10px;
+            border-radius: 4px;
+            margin: 2px;
+            font-size: 13px;
+        }
+        .count { color: #4ecca3; font-weight: 700; }
+        .enchant { color: #a29bfe; font-size: 11px; }
+        .no-results { color: #888; text-align: center; padding: 20px; }
+        .stats { text-align: center; color: #888; font-size: 12px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Minecraft Loot Predictor</h1>
+    
+    <div class="panel">
+        <div class="form-row">
+            <label>Seed:</label>
+            <input type="number" id="seedInput" value="-6168393533729723991" placeholder="Enter world seed">
+        </div>
+        <div class="form-row">
+            <label>Structure:</label>
+            <select id="typeSelect">
+                <option value="igloo">Igloo</option>
+                <option value="desert_pyramid">Desert Pyramid</option>
+                <option value="jungle_temple">Jungle Temple</option>
+                <option value="pillager_outpost">Pillager Outpost</option>
+                <option value="shipwreck">Shipwreck</option>
+                <option value="ruined_portal">Ruined Portal</option>
+                <option value="ruined_portal_n">Ruined Portal (Nether)</option>
+                <option value="buried_treasure">Buried Treasure</option>
+                <option value="bastion">Bastion</option>
+                <option value="fortress">Fortress</option>
+                <option value="end_city">End City</option>
+                <option value="stronghold">Stronghold</option>
+            </select>
+        </div>
+        <div class="form-row">
+            <label>Radius:</label>
+            <input type="number" id="radiusInput" value="5000" min="100" max="50000" step="100">
+            <span style="color:#888">blocks</span>
+        </div>
+        <div class="form-row">
+            <button id="searchBtn" onclick="searchLoot()">Search Loot</button>
+        </div>
+    </div>
+    
+    <div id="status"></div>
+    <div id="results"></div>
+    
+    <script src="cubiomes_loot.js"></script>
+    <script>
+        let cubiomes = null;
+        let getLootPtr = null;
+
+        // Initialize WASM
+        CubiomesLoot().then(module => {
+            cubiomes = module;
+            getLootPtr = cubiomes.cwrap('getStructureLoot', 'number', ['number', 'number', 'number']);
+            document.getElementById('searchBtn').disabled = false;
+        }).catch(err => {
+            document.getElementById('status').innerHTML = '<div class="error">Failed to load WASM: ' + err + '</div>';
+        });
+
+        function searchLoot() {
+            if (!cubiomes) return;
+            
+            const seedStr = document.getElementById('seedInput').value;
+            const type = document.getElementById('typeSelect').value;
+            const radius = parseInt(document.getElementById('radiusInput').value);
+            
+            document.getElementById('searchBtn').disabled = true;
+            document.getElementById('status').innerHTML = '<div class="loading">Computing... (this may take a few seconds)</div>';
+            document.getElementById('results').innerHTML = '';
+            
+            // Run in next tick to allow UI update
+            setTimeout(() => {
+                try {
+                    // Allocate strings
+                    const seedLen = cubiomes.lengthBytesUTF8(seedStr) + 1;
+                    const seedPtr = cubiomes._malloc(seedLen);
+                    cubiomes.stringToUTF8(seedStr, seedPtr, seedLen);
+                    
+                    const typeLen = cubiomes.lengthBytesUTF8(type) + 1;
+                    const typePtr = cubiomes._malloc(typeLen);
+                    cubiomes.stringToUTF8(type, typePtr, typeLen);
+                    
+                    // Call WASM function
+                    const resultPtr = getLootPtr(seedPtr, typePtr, radius);
+                    const jsonStr = cubiomes.UTF8ToString(resultPtr);
+                    
+                    cubiomes._free(seedPtr);
+                    cubiomes._free(typePtr);
+                    
+                    const data = JSON.parse(jsonStr);
+                    renderResults(data);
+                } catch (e) {
+                    document.getElementById('status').innerHTML = '<div class="error">Error: ' + e.message + '</div>';
+                } finally {
+                    document.getElementById('searchBtn').disabled = false;
+                }
+            }, 10);
+        }
+        
+        function renderResults(structures) {
+            const status = document.getElementById('status');
+            const results = document.getElementById('results');
+            
+            if (!Array.isArray(structures) || structures.length === 0) {
+                status.innerHTML = '<div class="no-results">No structures found in range.</div>';
+                return;
+            }
+            
+            status.innerHTML = `<div class="stats">Found ${structures.length} structure(s)</div>`;
+            
+            let html = '';
+            for (const st of structures) {
+                html += '<div class="structure">';
+                html += `<div class="structure-header">Structure at (${st.x}, ${st.z}) - chunk (${st.chunkX}, ${st.chunkZ}) - ${st.distance} blocks away</div>`;
+                
+                if (st.chests && st.chests.length > 0) {
+                    for (const chest of st.chests) {
+                        html += '<div class="chest">';
+                        html += `<div class="chest-tp" onclick="navigator.clipboard.writeText('${chest.tp}')">${chest.tp} (click to copy)</div>`;
+                        html += `<div style="font-size:11px;color:#888">Piece: ${chest.piece} | Seed: ${chest.seed}</div>`;
+                        html += '<div style="margin-top:6px">';
+                        
+                        if (chest.loot && chest.loot.length > 0) {
+                            for (const item of chest.loot) {
+                                html += `<span class="loot-item">${item.item} <span class="count">x${item.count}</span>`;
+                                if (item.enchantments) {
+                                    for (const ench of item.enchantments) {
+                                        html += `<span class="enchant"> [${ench.name} ${ench.level}]</span>`;
+                                    }
+                                }
+                                if (item.potion) {
+                                    html += `<span class="enchant"> [${item.potion}]</span>`;
+                                }
+                                html += '</span>';
+                            }
+                        } else {
+                            html += '<span style="color:#888">(empty)</span>';
+                        }
+                        
+                        html += '</div></div>';
+                    }
+                } else {
+                    html += '<div style="color:#888">No chests</div>';
+                }
+                html += '</div>';
+            }
+            results.innerHTML = html;
+        }
+    </script>
+</body>
+</html>
