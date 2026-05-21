@@ -191,12 +191,20 @@
                 <option value="end_city">End City</option>
                 <option value="stronghold">Stronghold</option>
                 <option value="ancient_city">Ancient City</option>
+                <option value="trial_chambers">Trial Chambers</option>
             </select>
         </div>
         <div class="form-row" id="radiusRow">
             <label>Radius:</label>
             <input type="number" id="radiusInput" value="5000" min="100" max="50000" step="100">
             <span style="color:#888">blocks</span>
+        </div>
+        <div class="form-row" id="centerRow">
+            <label>Center:</label>
+            <span style="color:#888;margin-right:4px">X:</span>
+            <input type="number" id="centerXInput" value="0" style="width:100px;margin-right:12px">
+            <span style="color:#888;margin-right:4px">Z:</span>
+            <input type="number" id="centerZInput" value="0" style="width:100px">
         </div>
         <div class="form-row" id="vaultRow" style="display:none">
             <label>Openings:</label>
@@ -231,7 +239,7 @@
         // Initialize WASM
         CubiomesLoot().then(module => {
             cubiomes = module;
-            getLootPtr = cubiomes.cwrap('getStructureLoot', 'number', ['number', 'number', 'number']);
+            getLootPtr = cubiomes.cwrap('getStructureLoot', 'number', ['number', 'number', 'number', 'number', 'number']);
             getVaultPtr = cubiomes.cwrap('getOminousVaultLoot', 'number', ['number', 'number']);
             document.getElementById('searchBtn').disabled = false;
         }).catch(err => {
@@ -244,6 +252,7 @@
             document.getElementById('modeVault').classList.toggle('active', mode === 'vault');
             document.getElementById('structureRow').style.display = mode === 'structure' ? '' : 'none';
             document.getElementById('radiusRow').style.display = mode === 'structure' ? '' : 'none';
+            document.getElementById('centerRow').style.display = mode === 'structure' ? '' : 'none';
             document.getElementById('vaultRow').style.display = mode === 'vault' ? '' : 'none';
             document.getElementById('vaultSearchRow').style.display = mode === 'vault' ? '' : 'none';
             document.getElementById('status').innerHTML = '';
@@ -271,12 +280,14 @@
                     if (currentMode === 'structure') {
                         const type = document.getElementById('typeSelect').value;
                         const radius = parseInt(document.getElementById('radiusInput').value);
+                        const centerX = parseInt(document.getElementById('centerXInput').value) || 0;
+                        const centerZ = parseInt(document.getElementById('centerZInput').value) || 0;
 
                         const typeLen = type.length * 4 + 1;
                         const typePtr = cubiomes._malloc(typeLen);
                         cubiomes.stringToUTF8(type, typePtr, typeLen);
 
-                        const resultPtr = getLootPtr(seedPtr, typePtr, radius);
+                        const resultPtr = getLootPtr(seedPtr, typePtr, centerX, centerZ, radius);
                         jsonStr = cubiomes.UTF8ToString(resultPtr);
 
                         cubiomes._free(typePtr);
@@ -421,8 +432,11 @@
                 html += '<div class="structure">';
                 html += `<div class="structure-header">Structure at (${st.x}, ${st.z}) - chunk (${st.chunkX}, ${st.chunkZ}) - ${st.distance} blocks away</div>`;
 
+                let chestsRendered = 0;
                 if (st.chests && st.chests.length > 0) {
                     for (const chest of st.chests) {
+                        if (!chest.loot || chest.loot.length === 0) continue;
+                        chestsRendered++;
                         html += '<div class="chest">';
                         html += `<div class="chest-tp" onclick="navigator.clipboard.writeText('${chest.tp}')">${chest.tp} (click to copy)</div>`;
                         html += `<div style="font-size:11px;color:#888">Piece: ${chest.piece} | Seed: ${chest.seed}</div>`;
@@ -444,13 +458,12 @@
                                 }
                                 html += '</span>';
                             }
-                        } else {
-                            html += '<span style="color:#888">(empty)</span>';
                         }
 
                         html += '</div></div>';
                     }
-                } else {
+                }
+                if (chestsRendered === 0) {
                     html += '<div style="color:#888">No chests</div>';
                 }
                 html += '</div>';
