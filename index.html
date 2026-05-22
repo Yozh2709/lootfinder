@@ -196,7 +196,7 @@
         </div>
         <div class="form-row" id="radiusRow">
             <label>Radius:</label>
-            <input type="number" id="radiusInput" value="5000" min="100" max="50000" step="100">
+            <input type="number" id="radiusInput" value="5000" min="100" max="1000000" step="100">
             <span style="color:#888">blocks</span>
         </div>
         <div class="form-row" id="centerRow">
@@ -223,7 +223,7 @@
     <div id="status"></div>
     <div id="results"></div>
 
-    <script src="cubiomes_loot.js"></script>
+    <script src="cubiomes_loot.js?v=20260522"></script>
     <script>
         let cubiomes = null;
         let getLootPtr = null;
@@ -237,7 +237,14 @@
         let vaultCurrentPage = 1;
 
         // Initialize WASM
-        CubiomesLoot().then(module => {
+        CubiomesLoot({
+            locateFile: function(path, prefix) {
+                if (path.endsWith('.wasm')) {
+                    return prefix + path + '?v=20260522';
+                }
+                return prefix + path;
+            }
+        }).then(module => {
             cubiomes = module;
             getLootPtr = cubiomes.cwrap('getStructureLoot', 'number', ['number', 'number', 'number', 'number', 'number']);
             getVaultPtr = cubiomes.cwrap('getOminousVaultLoot', 'number', ['number', 'number']);
