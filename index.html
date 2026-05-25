@@ -169,6 +169,7 @@
             <div class="mode-toggle">
                 <button class="mode-btn active" id="modeStructure" onclick="setMode('structure')">Structure Loot</button>
                 <button class="mode-btn" id="modeVault" onclick="setMode('vault')">Ominous Vault</button>
+                <button class="mode-btn" id="modeVillager" onclick="setMode('villager')">Villager Finding</button>
             </div>
         </div>
         <div class="form-row">
@@ -215,6 +216,24 @@
             <label>Search:</label>
             <input type="text" id="vaultSearch" class="search-bar" placeholder="Filter items by name (e.g. 'diamond', 'enchanted')" oninput="filterVault()">
         </div>
+        <div class="form-row" id="villagerLevelRow" style="display:none">
+            <label>Level:</label>
+            <select id="villagerLevelSelect" onchange="searchLoot()">
+                <option value="1">Librarian Level 1 (Novice)</option>
+                <option value="2">Librarian Level 2 (Apprentice)</option>
+                <option value="3">Librarian Level 3 (Journeyman)</option>
+                <option value="4">Librarian Level 4 (Expert)</option>
+            </select>
+        </div>
+        <div class="form-row" id="villagerPlacementsRow" style="display:none">
+            <label>Placements:</label>
+            <input type="number" id="villagerPlacements" value="200" min="1" max="2000" step="1">
+            <span style="color:#888">consecutive rolls (max 2000)</span>
+        </div>
+        <div class="form-row" id="villagerSearchRow" style="display:none">
+            <label>Search:</label>
+            <input type="text" id="villagerSearch" class="search-bar" placeholder="Filter by enchantment name (e.g. 'mending', 'efficiency')" oninput="filterVillager()">
+        </div>
         <div class="form-row">
             <button id="searchBtn" onclick="searchLoot()" disabled>Search Loot</button>
         </div>
@@ -228,6 +247,7 @@
         let cubiomes = null;
         let getLootPtr = null;
         let getVaultPtr = null;
+        let getVillagerTradesPtr = null;
         let currentMode = 'structure';
 
         // Vault pagination state
@@ -235,6 +255,12 @@
         let vaultFilteredOpenings = [];
         let vaultPageSize = 50;
         let vaultCurrentPage = 1;
+
+        // Villager pagination state
+        let villagerAllPlacements = [];
+        let villagerFilteredPlacements = [];
+        let villagerPageSize = 50;
+        let villagerCurrentPage = 1;
 
         // Initialize WASM
         CubiomesLoot({
@@ -248,6 +274,7 @@
             cubiomes = module;
             getLootPtr = cubiomes.cwrap('getStructureLoot', 'number', ['number', 'number', 'number', 'number', 'number']);
             getVaultPtr = cubiomes.cwrap('getOminousVaultLoot', 'number', ['number', 'number']);
+            getVillagerTradesPtr = cubiomes.cwrap('getVillagerTrades', 'number', ['number', 'number', 'number']);
             document.getElementById('searchBtn').disabled = false;
         }).catch(err => {
             document.getElementById('status').innerHTML = '<div class="error">Failed to load WASM: ' + err + '</div>';
@@ -257,15 +284,31 @@
             currentMode = mode;
             document.getElementById('modeStructure').classList.toggle('active', mode === 'structure');
             document.getElementById('modeVault').classList.toggle('active', mode === 'vault');
+            document.getElementById('modeVillager').classList.toggle('active', mode === 'villager');
+            
             document.getElementById('structureRow').style.display = mode === 'structure' ? '' : 'none';
             document.getElementById('radiusRow').style.display = mode === 'structure' ? '' : 'none';
             document.getElementById('centerRow').style.display = mode === 'structure' ? '' : 'none';
+            
             document.getElementById('vaultRow').style.display = mode === 'vault' ? '' : 'none';
             document.getElementById('vaultSearchRow').style.display = mode === 'vault' ? '' : 'none';
+            
+            document.getElementById('villagerLevelRow').style.display = mode === 'villager' ? '' : 'none';
+            document.getElementById('villagerPlacementsRow').style.display = mode === 'villager' ? '' : 'none';
+            document.getElementById('villagerSearchRow').style.display = mode === 'villager' ? '' : 'none';
+            
             document.getElementById('status').innerHTML = '';
             document.getElementById('results').innerHTML = '';
+            
             vaultAllOpenings = [];
             vaultFilteredOpenings = [];
+            villagerAllPlacements = [];
+            villagerFilteredPlacements = [];
+
+            const btn = document.getElementById('searchBtn');
+            if (mode === 'structure') btn.innerText = 'Search Loot';
+            else if (mode === 'vault') btn.innerText = 'Search Loot';
+            else if (mode === 'villager') btn.innerText = 'Predict Trades';
         }
 
         function searchLoot() {
@@ -301,7 +344,7 @@
 
                         const data = JSON.parse(jsonStr);
                         renderResults(data.structures, data);
-                    } else {
+                    } else if (currentMode === 'vault') {
                         const numOpenings = parseInt(document.getElementById('vaultOpenings').value);
                         const resultPtr = getVaultPtr(seedPtr, numOpenings);
                         jsonStr = cubiomes.UTF8ToString(resultPtr);
@@ -311,6 +354,17 @@
                         vaultFilteredOpenings = vaultAllOpenings;
                         vaultCurrentPage = 1;
                         renderVaultPage();
+                    } else if (currentMode === 'villager') {
+                        const level = parseInt(document.getElementById('villagerLevelSelect').value);
+                        const maxPlacements = parseInt(document.getElementById('villagerPlacements').value) || 200;
+                        const resultPtr = getVillagerTradesPtr(seedPtr, level, maxPlacements);
+                        jsonStr = cubiomes.UTF8ToString(resultPtr);
+
+                        const data = JSON.parse(jsonStr);
+                        villagerAllPlacements = data.placements || [];
+                        villagerFilteredPlacements = villagerAllPlacements;
+                        villagerCurrentPage = 1;
+                        renderVillagerPage();
                     }
 
                     cubiomes._free(seedPtr);
@@ -383,7 +437,6 @@
                 html += '</div></div>';
             }
 
-            // Pagination controls
             html += '<div class="pagination">';
             html += `<span class="page-info">Page ${vaultCurrentPage} / ${totalPages}</span>`;
             html += `<button class="page-btn" onclick="goVaultPage(${vaultCurrentPage - 1})" ${vaultCurrentPage <= 1 ? 'disabled' : ''}>Prev</button>`;
@@ -419,6 +472,122 @@
             vaultCurrentPage = page;
             renderVaultPage();
             window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function filterVillager() {
+            const query = document.getElementById('villagerSearch').value.toLowerCase().trim();
+            if (!query) {
+                villagerFilteredPlacements = villagerAllPlacements;
+            } else {
+                villagerFilteredPlacements = villagerAllPlacements.filter(p => {
+                    if (!p.trades) return false;
+                    return p.trades.some(t => {
+                        if (t.type === 'enchanted_book') {
+                            return t.enchantment.toLowerCase().includes(query);
+                        }
+                        return t.type.toLowerCase().includes(query) || (t.wants && t.wants.toLowerCase().includes(query));
+                    });
+                });
+            }
+            villagerCurrentPage = 1;
+            renderVillagerPage();
+        }
+
+        function renderVillagerPage() {
+            const status = document.getElementById('status');
+            const results = document.getElementById('results');
+
+            if (!villagerFilteredPlacements || villagerFilteredPlacements.length === 0) {
+                status.innerHTML = '<div class="no-results">No trade combinations found matching the filter.</div>';
+                results.innerHTML = '';
+                return;
+            }
+
+            const total = villagerFilteredPlacements.length;
+            const totalPages = Math.max(1, Math.ceil(total / villagerPageSize));
+            if (villagerCurrentPage > totalPages) villagerCurrentPage = totalPages;
+            if (villagerCurrentPage < 1) villagerCurrentPage = 1;
+
+            const start = (villagerCurrentPage - 1) * villagerPageSize;
+            const end = Math.min(start + villagerPageSize, total);
+            const pageItems = villagerFilteredPlacements.slice(start, end);
+
+            status.innerHTML = `<div class="stats">Villager Finding - ${total} placement(s) total | Showing ${start + 1}-${end}</div>`;
+
+            let html = '';
+            for (const p of pageItems) {
+                html += '<div class="opening">';
+                html += `<div class="opening-header">Lectern Placement #${p.placement}</div>`;
+                html += '<div style="margin-top:6px; display: flex; flex-direction: column; gap: 6px;">';
+
+                for (const t of p.trades) {
+                    if (t.type === 'enchanted_book') {
+                        html += `<div><span class="loot-item" style="background: #2d1b4e; border: 1px solid #7047eb; display: block; padding: 8px 12px; border-radius: 6px;">`;
+                        html += `<span style="color:#a29bfe; font-weight:bold; font-size:16px;">${t.enchantment} ${romanize(t.book_level)}</span>`;
+                        html += `<span style="float: right; color:#f1c40f; font-weight:700; font-size:14px;">Cost: <span class="count">${t.emerald_cost}</span> Emeralds + 1 Book</span>`;
+                        html += `</span></div>`;
+                    } else {
+                        html += `<div><span class="loot-item" style="background: #1e272e; opacity: 0.85; display: block; padding: 6px 12px; border-radius: 6px; font-size: 13px;">`;
+                        if (t.wants === 'emerald') {
+                            html += `Buy <span style="color: #4ecca3; font-weight: 700;">${t.gives}</span> x${t.gives_count} for <span style="color: #f1c40f; font-weight: 700;">${t.wants_count}</span> Emeralds`;
+                        } else {
+                            html += `Sell <span style="color: #e67e22; font-weight: 700;">${t.wants_count} ${t.wants}</span> for <span style="color: #f1c40f; font-weight: 700;">${t.gives_count}</span> Emerald`;
+                        }
+                        html += `</span></div>`;
+                    }
+                }
+
+                html += '</div></div>';
+            }
+
+            html += '<div class="pagination">';
+            html += `<span class="page-info">Page ${villagerCurrentPage} / ${totalPages}</span>`;
+            html += `<button class="page-btn" onclick="goVillagerPage(${villagerCurrentPage - 1})" ${villagerCurrentPage <= 1 ? 'disabled' : ''}>Prev</button>`;
+
+            const maxVisible = 7;
+            let pageStart = Math.max(1, villagerCurrentPage - Math.floor(maxVisible / 2));
+            let pageEnd = Math.min(totalPages, pageStart + maxVisible - 1);
+            if (pageEnd - pageStart < maxVisible - 1) {
+                pageStart = Math.max(1, pageEnd - maxVisible + 1);
+            }
+
+            if (pageStart > 1) {
+                html += `<button class="page-btn" onclick="goVillagerPage(1)">1</button>`;
+                if (pageStart > 2) html += `<span style="color:#888;padding:6px;">...</span>`;
+            }
+
+            for (let p = pageStart; p <= pageEnd; p++) {
+                html += `<button class="page-btn ${p === villagerCurrentPage ? 'active' : ''}" onclick="goVillagerPage(${p})">${p}</button>`;
+            }
+
+            if (pageEnd < totalPages) {
+                if (pageEnd < totalPages - 1) html += `<span style="color:#888;padding:6px;">...</span>`;
+                html += `<button class="page-btn" onclick="goVillagerPage(${totalPages})">${totalPages}</button>`;
+            }
+
+            html += `<button class="page-btn" onclick="goVillagerPage(${villagerCurrentPage + 1})" ${villagerCurrentPage >= totalPages ? 'disabled' : ''}>Next</button>`;
+            html += '</div>';
+
+            results.innerHTML = html;
+        }
+
+        function goVillagerPage(page) {
+            villagerCurrentPage = page;
+            renderVillagerPage();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function romanize(num) {
+            if (isNaN(num)) return num;
+            var digits = String(+num).split(""),
+                key = ["","C","CC","CCC","CD","D","DC","DCC","DCCC","CM",
+                       "","X","XX","XXX","XL","L","LX","LXX","LXXX","XC",
+                       "","I","II","III","IV","V","VI","VII","VIII","IX"],
+                roman = "",
+                i = 3;
+            while (i--)
+                roman = (key[+digits.pop() + (i * 10)] || "") + roman;
+            return Array(+digits.join("") + 1).join("M") + roman;
         }
 
         function renderResults(structures, debugInfo) {
